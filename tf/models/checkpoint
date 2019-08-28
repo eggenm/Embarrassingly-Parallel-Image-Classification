@@ -1,0 +1,6 @@
+model_checkpoint_path: "C:\\Users\\ME\\Projects\\spatial_ml\\Embarrassingly-Parallel-Image-Classification\\tf\\models\\model.ckpt-4000"
+all_model_checkpoint_paths: "C:\\Users\\ME\\Projects\\spatial_ml\\Embarrassingly-Parallel-Image-Classification\\tf\\models\\model.ckpt-3085"
+all_model_checkpoint_paths: "C:\\Users\\ME\\Projects\\spatial_ml\\Embarrassingly-Parallel-Image-Classification\\tf\\models\\model.ckpt-3320"
+all_model_checkpoint_paths: "C:\\Users\\ME\\Projects\\spatial_ml\\Embarrassingly-Parallel-Image-Classification\\tf\\models\\model.ckpt-3554"
+all_model_checkpoint_paths: "C:\\Users\\ME\\Projects\\spatial_ml\\Embarrassingly-Parallel-Image-Classification\\tf\\models\\model.ckpt-3783"
+all_model_checkpoint_paths: "C:\\Users\\ME\\Projects\\spatial_ml\\Embarrassingly-Parallel-Image-Classification\\tf\\models\\model.ckpt-4000"
