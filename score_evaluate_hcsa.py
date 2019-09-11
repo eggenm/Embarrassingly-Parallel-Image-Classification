@@ -23,7 +23,7 @@ n_workers = 10
 #############   DIRECTORIES  ################################
 #############################################################
 
-model_dir = "C:\\Users\\ME\\Dropbox\\HCSproject\\data\\PoC\\tf\\models\\"
+model_dir = "C:\\Users\\ME\\Dropbox\\HCSproject\\data\\PoC\\trainedModels\\tf\\models\\"
 dataset_dir = "C:\\Users\\ME\\Dropbox\\HCSproject\\data\\PoC\\app_kalbar_cntk\\tiles\\balanced_validation_set\\Not_HCSA\\"
 
 
