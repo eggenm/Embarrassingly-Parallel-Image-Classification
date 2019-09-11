@@ -19,10 +19,14 @@ def get_nlcd_id(my_filename):
     return(label_to_number_dict[os.path.basename(folder)])
 
 n_workers = 10
-#local_tmp_dir = '/tmp/models
-model_dir = "C:\\Users\\ME\Projects\\spatial_ml\\Embarrassingly-Parallel-Image-Classification\\tf\\models\\"
 
+#############   DIRECTORIES  ################################
+#############################################################
+
+model_dir = "C:\\Users\\ME\\Dropbox\\HCSproject\\data\\PoC\\tf\\models\\"
 dataset_dir = "C:\\Users\\ME\\Dropbox\\HCSproject\\data\\PoC\\app_kalbar_cntk\\tiles\\balanced_validation_set\\Not_HCSA\\"
+
+
 #mage_rdd = sc.binaryFiles('{}/*/*.png'.format(dataset_dir), minPartitions=n_workers).coalesce(n_workers)
 
 ##############              FUNCTIONS                  ##########################
