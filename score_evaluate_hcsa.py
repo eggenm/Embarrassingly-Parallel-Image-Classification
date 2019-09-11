@@ -8,6 +8,7 @@ import tensorflow as tf
 import functools
 from tensorflow.contrib.slim.nets import resnet_v1
 slim = tf.contrib.slim
+import dirfuncs
 
 label_to_number_dict = {'NA':0,
                        'Not_HCSA':1,
@@ -23,9 +24,11 @@ n_workers = 10
 #############   DIRECTORIES  ################################
 #############################################################
 
-model_dir = "C:\\Users\\ME\\Dropbox\\HCSproject\\data\\PoC\\trainedModels\\tf\\models\\"
-dataset_dir = "C:\\Users\\ME\\Dropbox\\HCSproject\\data\\PoC\\app_kalbar_cntk\\tiles\\balanced_validation_set\\Not_HCSA\\"
+dropbox_dir = dirfuncs.guess_dropbox_dir()
+model_dir = dropbox_dir + "HCSproject\\data\\PoC\\trainedModels\\tf\\models\\"
+dataset_dir = dropbox_dir + "HCSproject\\data\\PoC\\app_kalbar_cntk\\tiles\\balanced_validation_set\\Not_HCSA\\"
 
+model_path = model_dir + "model.ckpt-4000"
 
 #mage_rdd = sc.binaryFiles('{}/*/*.png'.format(dataset_dir), minPartitions=n_workers).coalesce(n_workers)
 
@@ -86,7 +89,7 @@ def tf_run_worker(files):
         with tf.Session() as sess:
             my_saver = tf.train.Saver()
             print(model_dir)
-            my_saver.restore(sess, tf.train.latest_checkpoint(model_dir))
+            my_saver.restore(sess, tf.train.load_checkpoint(model_path))
 
             coord = tf.train.Coordinator()
             print(files)
