@@ -1,0 +1,267 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Sep 11 15:12:56 2019
+
+@author: rheil
+"""
+# =============================================================================
+# Imports
+# =============================================================================
+import keras
+import dirfuncs
+import pandas as pd
+from pathlib import Path
+from PIL import Image
+import numpy as np
+import rasterio as rio
+from sklearn.ensemble import RandomForestClassifier as rfc
+from sklearn.model_selection import train_test_split, cross_val_score, \
+    GridSearchCV, cross_val_predict, ShuffleSplit, learning_curve, RandomizedSearchCV
+import sklearn.metrics
+from scipy.stats import reciprocal
+
+# =============================================================================
+# Identify files
+# =============================================================================
+dropbox_dir = dirfuncs.guess_dropbox_dir()
+input_dir = dropbox_dir + "HCSproject\\data\\PoC\\app_kalbar_cntk\\"
+img_file = input_dir + 'app_kalbar_input_ndvi_s2.tif'
+clas_file = input_dir + 'app_kalbar_remap.tif'
+outclas_file = input_dir + 'sklearn_test/classified.tif'
+
+classes = {2: "HCSA",
+           1: "Not_HCSA",
+           0: "NA"}
+
+# =============================================================================
+# Read and prep raster data
+# =============================================================================
+def return_window(array, i, j, n):
+    """
+    Parameters
+    ----------
+    array: np array
+        Array of image to pull from
+        
+    i: int
+        row location of center
+    
+    j: int
+        column location of center
+    
+    n: int
+        width of moving window
+    
+    Returns
+    -------
+    window: np array
+        nxn array of values centered around pixel i,j        
+    """
+    shift = (n-1)/2
+    window = img[:, int(i-shift):int(i+shift+1), int(j-shift):int(j+shift+1)]
+    return window
+
+def gen_windows(array, n):
+    """
+    Parameters
+    ----------
+    array: np array
+        Image from which to draw windows
+    
+    n: int
+        width of moving window
+    
+    Returns
+    -------
+    windows: pandas dataframe
+        df with ixj rows, with one column for every pixel values in nxn window
+        of pixel i,j
+    """
+    shape = array.shape
+    start = int((n-1)/2)
+    end_i = shape[1] - start
+    end_j = shape[2] - start
+    win_dict = {}
+    for i in range(start, end_i):
+        for j in range(start, end_j):
+            win_dict[(i,j)] = return_window(array, i, j, n)
+    windows = pd.Series(win_dict)
+    windows.index.names = ['i', 'j']
+    index = windows.index
+    windows = pd.DataFrame(windows.apply(lambda x: x.flatten()).values.tolist(), index = index)
+    return(windows)
+    
+## Read spectral data
+with rio.open(img_file) as img_src:
+    img = img_src.read()
+shape = img.shape
+windows = gen_windows(img, 3)
+
+## Read classification labels
+with rio.open(clas_file) as clas_src:
+    clas = clas_src.read()
+clas_dict = {}
+for i in range(clas.shape[1]):
+    for j in range(clas.shape[2]):
+        clas_dict[(i,j)] = clas[0, i, j]
+full_index = pd.MultiIndex.from_product([range(shape[1]), range(shape[2])], names = ['i', 'j'])
+classes = pd.DataFrame({'class': pd.Series(clas_dict)}, index = full_index)
+
+## Combine spectral and label data, extract training and test datasets
+data_df = classes.merge(windows, left_index = True, right_index = True, how = 'left')
+data_df = data_df.dropna()
+data_df = data_df.loc[data_df['class']>0]
+X = data_df[[col for col in data_df.columns if col != 'class']]
+y = data_df['class'].values
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, 
+                                                    random_state=123)
+
+# =============================================================================
+# Train and test random forest classifier
+# =============================================================================
+clf = rfc(n_estimators=30, max_depth = 5, max_features = .3, max_leaf_nodes = 10,
+          random_state=123, oob_score = True, n_jobs = -1, 
+          class_weight = {1: 0.33, 2: 0.34})
+#clf.fit(X_train, y_train)
+
+param_grid = [{'max_depth': [2, 10],
+               'max_leaf_nodes': [10, 20, 50], 
+               'max_features': [.25, .5, .75]}]
+grid_search = GridSearchCV(clf, param_grid, cv = 5, scoring = 'sparse_categorical_crossentropy',
+                           return_train_score = True, refit = True)
+
+grid_search.fit(X_train, y_train)
+    
+fitted_clf = grid_search.best_estimator_
+y_hat = fitted_clf.predict(X_test)
+print(sklearn.metrics.classification_report(y_test, y_hat))
+print(sklearn.metrics.confusion_matrix(y_test, y_hat))
+
+y_hat = fitted_clf.predict(X_train)
+print(sklearn.metrics.classification_report(y_train, y_hat))
+print(sklearn.metrics.confusion_matrix(y_train, y_hat))
+
+# =============================================================================
+# Neural network
+# =============================================================================
+model = keras.models.Sequential()
+model.add(keras.layers.InputLayer(input_shape = (9,)))
+model.add(keras.layers.Dense(30, activation="relu"))
+model.add(keras.layers.Dense(30, activation="relu"))
+model.add(keras.layers.Dense(30, activation="relu"))
+model.add(keras.layers.Dense(30, activation="relu"))
+model.add(keras.layers.Dense(3, activation="softmax"))
+
+model.compile(loss="sparse_categorical_crossentropy",
+              optimizer=keras.optimizers.SGD(lr=0.05),
+              metrics=["accuracy"])
+history = model.fit(X_train, y_train, epochs=1,
+                    validation_split = 0.5,
+                    callbacks=[keras.callbacks.EarlyStopping(patience=5)])
+
+model.evaluate(X_test, y_test)
+y_proba = model.predict(X_test)
+y_predict = model.predict_classes(X_test)
+print(sklearn.metrics.classification_report(y_test, y_predict))
+print(sklearn.metrics.confusion_matrix(y_test, y_predict))
+
+# =============================================================================
+# Create predicted map
+# =============================================================================
+data_df['predicted'] = fitted_clf.predict(X)
+clas_df = pd.DataFrame(index = full_index)
+classified = clas_df.merge(data_df['predicted'], left_index = True, right_index = True, how = 'left').sort_index()
+classified = classified['predicted'].values.reshape(shape[1], shape[2])
+classified = (classified - 1) * 255
+clas_img = Image.fromarray(classified)
+clas_img.show()
+
+classified = classified[np.newaxis, :, :].astype(rio.int8)
+
+with rio.open(img_file) as src:
+    height = src.height
+    width = src.width
+    crs = src.crs
+    transform = src.transform
+    dtype = rio.int8
+    count = 1
+    with rio.open(clas_file, 'w', driver = 'GTiff', 
+                  height = height, width = width, 
+                  crs = crs, dtype = dtype, 
+                  count = count, transform = transform) as clas_dst:
+        clas_dst.write(classified)
+
+# =============================================================================
+# Blockwise predicted map (could be useful for larger maps)
+# Probably would need to be modified to work with windowed values rather than multiband image
+# =============================================================================
+class classify_block:
+    def __init__(self, block, fitted_clf):
+        """
+        Parameters
+        ----------
+        block: np array
+            array drawn from raster using rasterio block read
+        
+        fitted_clf: sklearn classifier
+            classifier that should be applid to block
+        """
+        self.fitted_clf = fitted_clf
+        self.shape = block.shape
+        block = block.reshape((self.shape[0], self.shape[1] * self.shape[2])).T
+        self.block_df = pd.DataFrame(block)
+        self.x_df = self.block_df.dropna()
+    
+    def classify(self):
+        """
+        Returns
+        -------
+        classified: array
+            Array of predicted classes
+        """
+        y_hat = self.fitted_clf.predict(self.x_df)
+        y_hat = pd.Series(y_hat, index = self.x_df.index)
+        y_hat.name = 'y_hat'
+        temp_df = self.block_df.merge(y_hat, left_index = True, right_index = True, how = 'left')
+        classified = temp_df['y_hat'].to_numpy().reshape(self.shape[1], self.shape[2])
+        classified = classified[np.newaxis, :, :].astype(rio.int8)
+        return classified
+    
+    def calc_probabilities(self):
+        """
+        Returns
+        -------
+        probabilities: array
+            Array of predicted probabilities for each class
+        """
+        clas_cols = ['prob_' + str(clas) for clas in fitted_clf.classes_]
+        pred_df = self.fitted_clf.predict_proba(self.x_df)
+        pred_df = pd.DataFrame(pred_df, index = self.x_df.index, columns = clas_cols)    
+        temp_df = self.block_df.merge(pred_df, left_index = True, right_index = True, how = 'left')
+        probabilities = temp_df[clas_cols].to_numpy().T.reshape(len(clas_cols), self.shape[1], self.shape[2])
+        probabilities = probabilities.astype(rio.float32)
+        return probabilities
+
+clas_file = ''
+prob_file = ''
+
+with rio.open(img_file) as src:
+    clas_dst = rio.open(clas_file, 'w', driver = 'GTiff', 
+                   height = src.height, width = src.width, 
+                   crs = src.crs, dtype = rio.int8, 
+                   count = 1, transform = src.transform)
+    prob_dst = rio.open(prob_file, 'w', driver = 'GTiff', 
+                   height = src.height, width = src.width, 
+                   crs = src.crs, dtype = rio.float32, 
+                   count = len(fitted_clf.classes_), transform = src.transform)
+    for ji, window in src.block_windows(1):
+        block = src.read(window = window)
+        if sum(sum(sum(~np.isnan(block))))>0:
+            block_classifier = classify_block(block, fitted_clf)
+            classified = block_classifier.classify()
+            probabilities = block_classifier.calc_probabilities()
+            clas_dst.write(classified, window = window)
+            prob_dst.write(probabilities, window = window)
+
+clas_dst.close()
+prob_dst.close()
