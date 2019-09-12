@@ -224,7 +224,7 @@ def find_tiles_with_consistent_labels(region_bounds, region_size, tile_size):
     return (tiles_to_use)
 
 
-tile_size = RegionSize(210, 210)
+tile_size = RegionSize(120, 120)
 tiles = find_tiles_with_consistent_labels(region_bounds, approx_region_size, tile_size)
 print('Found {} tiles to extract'.format(len(tiles)))
 
