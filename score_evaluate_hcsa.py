@@ -89,7 +89,7 @@ def tf_run_worker(files):
         with tf.Session() as sess:
             my_saver = tf.train.Saver()
             print(model_dir)
-            my_saver.restore(sess, tf.train.load_checkpoint(model_path))
+            my_saver.restore(sess, model_path)
 
             coord = tf.train.Coordinator()
             print(files)
@@ -99,7 +99,7 @@ def tf_run_worker(files):
                     imported_image_np = np.asarray(Image.open(file), dtype=np.uint8)
                     #print(imported_image_np)
                     result = sess.run(predictions, feed_dict={current_image: imported_image_np})
-                    #true_label = get_nlcd_id(file[0])
+#                    true_label = get_nlcd_id(file[0])
                     print("TRUE  " , 'HCSA  ', "   RESULT   ", result[0])
                     results.append([file, 'HCSA', result[0]])
                     #break
