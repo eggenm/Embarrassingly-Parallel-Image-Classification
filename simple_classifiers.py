@@ -20,6 +20,13 @@ from sklearn.model_selection import train_test_split, cross_val_score, \
     GridSearchCV, cross_val_predict, ShuffleSplit, learning_curve, RandomizedSearchCV
 import sklearn.metrics
 from scipy.stats import reciprocal
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+import keras.wrappers.scikit_learn
+from scipy.stats import reciprocal
+from sklearn.model_selection import RandomizedSearchCV
+
+
+
 
 # =============================================================================
 # Identify files
@@ -105,7 +112,7 @@ outds = gdal.Translate(outtif, outds)
 with rio.open(outtif) as img_src:
     img = img_src.read()
 shape = img.shape
-windows = gen_windows(img, 3)
+windows = gen_windows(img, 1)
 
 ## Read classification labels
 with rio.open(clas_file) as clas_src:
@@ -120,10 +127,16 @@ classes = pd.DataFrame({'class': pd.Series(clas_dict)}, index = full_index)
 ## Combine spectral and label data, extract training and test datasets
 data_df = classes.merge(windows, left_index = True, right_index = True, how = 'left')
 data_df = data_df.dropna()
-data_df = data_df.loc[data_df['class']>0]
+data_df = data_df.loc[data_df['class']>0]  # Shouldn't need to limit to a single class
 X = data_df[[col for col in data_df.columns if col != 'class']]
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X.astype(np.float64))
 y = data_df['class'].values
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, 
+#encoder = LabelEncoder() # Could be used if we're not always dealing with the same classes
+#encoder.fit(y)
+#n_classes = encoder.classes_.shape[0]
+#y_encoded = encoder.transform(y)
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, 
                                                     random_state=123)
 
 # =============================================================================
@@ -177,6 +190,42 @@ y_predict = model.predict_classes(X_test)
 print('*************  NEURAL NET REPORT *********************')
 print(sklearn.metrics.classification_report(y_test, y_predict))
 print(sklearn.metrics.confusion_matrix(y_test, y_predict))
+
+
+# =============================================================================
+# Neural net with hyperparameter tuning
+# =============================================================================
+def build_model(n_hidden = 1, n_neurons = 30, learning_rate = 0.03, n_bands = 3, n_classes = 2):
+    model = keras.models.Sequential()
+    model.add(keras.layers.InputLayer(input_shape = (n_bands,)))
+    for layer in range(n_hidden):
+        model.add(keras.layers.Dense(n_neurons, activation="relu"))
+    model.add(keras.layers.Dense(n_classes, activation="softmax"))
+    
+    model.compile(loss="sparse_categorical_crossentropy",
+                  optimizer=keras.optimizers.SGD(lr=learning_rate),
+                  metrics=["accuracy"])
+    return model
+
+keras_clf = keras.wrappers.scikit_learn.KerasClassifier(build_model)
+
+param_distribs = {"n_hidden": [1, 5, 10],
+                  "n_neurons": np.arange(1, 100),
+                  "learning_rate": reciprocal(3e-3, 7e-2)}
+rnd_search_cv = RandomizedSearchCV(keras_clf, param_distribs, n_iter=10, cv=3)
+rnd_search_cv.fit(X_train, y_train, epochs=100, validation_split = 0.8,
+                  callbacks = [keras.callbacks.EarlyStopping(patience = 10)])
+
+model = rnd_search_cv.best_estimator_
+print('*************  TUNED NEURAL NET - WITHIN REPORT *********************')
+y_pred = model.predict(X_train)
+print(sklearn.metrics.classification_report(y_train, y_pred))
+print(sklearn.metrics.confusion_matrix(y_train, y_pred))
+
+y_pred = model.predict_classes(X_test)
+print('*************  TUNED NEURAL NET - OUT REPORT *********************')
+print(sklearn.metrics.classification_report(y_test, y_pred))
+print(sklearn.metrics.confusion_matrix(y_test, y_pred))
 
 # =============================================================================
 # Create predicted map
