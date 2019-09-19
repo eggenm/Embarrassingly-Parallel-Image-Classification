@@ -127,7 +127,7 @@ classes = pd.DataFrame({'class': pd.Series(clas_dict)}, index = full_index)
 ## Combine spectral and label data, extract training and test datasets
 data_df = classes.merge(windows, left_index = True, right_index = True, how = 'left')
 data_df = data_df.dropna()
-data_df = data_df.loc[data_df['class']>0]  # Shouldn't need to limit to a single class
+#data_df = data_df.loc[data_df['class']>0]  # Shouldn't need to limit to a single class
 X = data_df[[col for col in data_df.columns if col != 'class']]
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X.astype(np.float64))
@@ -195,13 +195,12 @@ print(sklearn.metrics.confusion_matrix(y_test, y_predict))
 # =============================================================================
 # Neural net with hyperparameter tuning
 # =============================================================================
-def build_model(n_hidden = 1, n_neurons = 30, learning_rate = 0.03, n_bands = 3, n_classes = 2):
+def build_model(n_hidden = 1, n_neurons = 30, learning_rate = 0.03, n_bands = 3, n_classes = 3):
     model = keras.models.Sequential()
     model.add(keras.layers.InputLayer(input_shape = (n_bands,)))
     for layer in range(n_hidden):
         model.add(keras.layers.Dense(n_neurons, activation="relu"))
     model.add(keras.layers.Dense(n_classes, activation="softmax"))
-    
     model.compile(loss="sparse_categorical_crossentropy",
                   optimizer=keras.optimizers.SGD(lr=learning_rate),
                   metrics=["accuracy"])
@@ -214,15 +213,18 @@ param_distribs = {"n_hidden": [1, 5, 10],
                   "learning_rate": reciprocal(3e-3, 7e-2)}
 rnd_search_cv = RandomizedSearchCV(keras_clf, param_distribs, n_iter=10, cv=3)
 rnd_search_cv.fit(X_train, y_train, epochs=100, validation_split = 0.8,
-                  callbacks = [keras.callbacks.EarlyStopping(patience = 10)])
+                  callbacks = [keras.callbacks.EarlyStopping(patience = 5)])
+
+keras_clf.fit(X_train, y_train, epochs=10, validation_split = 0.8,
+              callbacks = [keras.callbacks.EarlyStopping(patience = 5)])
 
 model = rnd_search_cv.best_estimator_
-print('*************  TUNED NEURAL NET - WITHIN REPORT *********************')
 y_pred = model.predict(X_train)
+print('*************  TUNED NEURAL NET - WITHIN REPORT *********************')
 print(sklearn.metrics.classification_report(y_train, y_pred))
 print(sklearn.metrics.confusion_matrix(y_train, y_pred))
 
-y_pred = model.predict_classes(X_test)
+y_pred = model.predict(X_test)
 print('*************  TUNED NEURAL NET - OUT REPORT *********************')
 print(sklearn.metrics.classification_report(y_test, y_pred))
 print(sklearn.metrics.confusion_matrix(y_test, y_pred))
