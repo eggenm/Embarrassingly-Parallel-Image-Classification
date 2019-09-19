@@ -13,6 +13,7 @@ import pandas as pd
 from pathlib import Path
 from PIL import Image
 import numpy as np
+from osgeo import gdal
 import rasterio as rio
 from sklearn.ensemble import RandomForestClassifier as rfc
 from sklearn.model_selection import train_test_split, cross_val_score, \
@@ -25,10 +26,16 @@ from scipy.stats import reciprocal
 # =============================================================================
 dropbox_dir = dirfuncs.guess_dropbox_dir()
 input_dir = dropbox_dir + "HCSproject\\data\\PoC\\app_kalbar_cntk\\"
-img_file = input_dir + 'app_kalbar_input_ndvi_s2.tif'
+img_file1 = input_dir + 'app_kalbar_input_ndvi_s2.tif'
+img_file2 = input_dir + 'app_kalbar_input.S2_swir1.tif'
+img_file3 = input_dir + 'app_kalbar_input.S2_swir2.tif'
+img_file4 = input_dir + 'app_kalbar_input.VH.tif'
 clas_file = input_dir + 'app_kalbar_remap.tif'
 outclas_file = input_dir + 'sklearn_test/classified.tif'
-
+outvrt = '/vsimem/stacked.vrt' #/vsimem is special in-memory virtual "directory"
+outtif = input_dir + 'app_kalbar_input_stacked.tif'
+tifs = [img_file1, img_file2, img_file3]#, img_file4]
+print('**  INPUT:  ', tifs)
 classes = {2: "HCSA",
            1: "Not_HCSA",
            0: "NA"}
@@ -92,7 +99,10 @@ def gen_windows(array, n):
     return(windows)
     
 ## Read spectral data
-with rio.open(img_file) as img_src:
+outds = gdal.BuildVRT(outvrt, tifs, separate=True)
+outds = gdal.Translate(outtif, outds)
+
+with rio.open(outtif) as img_src:
     img = img_src.read()
 shape = img.shape
 windows = gen_windows(img, 3)
@@ -127,17 +137,19 @@ clf = rfc(n_estimators=30, max_depth = 5, max_features = .3, max_leaf_nodes = 10
 param_grid = [{'max_depth': [2, 10],
                'max_leaf_nodes': [10, 20, 50], 
                'max_features': [.25, .5, .75]}]
-grid_search = GridSearchCV(clf, param_grid, cv = 5, scoring = 'sparse_categorical_crossentropy',
+grid_search = GridSearchCV(clf, param_grid, cv = 5, #scoring = 'sparse_categorical_crossentropy',
                            return_train_score = True, refit = True)
 
 grid_search.fit(X_train, y_train)
     
 fitted_clf = grid_search.best_estimator_
 y_hat = fitted_clf.predict(X_test)
+print('*************  RANDOM FOREST  - X_TEST  **********************')
 print(sklearn.metrics.classification_report(y_test, y_hat))
 print(sklearn.metrics.confusion_matrix(y_test, y_hat))
 
 y_hat = fitted_clf.predict(X_train)
+print('*************  RANDOM FOREST  - X_TRAIN  **********************')
 print(sklearn.metrics.classification_report(y_train, y_hat))
 print(sklearn.metrics.confusion_matrix(y_train, y_hat))
 
@@ -145,7 +157,7 @@ print(sklearn.metrics.confusion_matrix(y_train, y_hat))
 # Neural network
 # =============================================================================
 model = keras.models.Sequential()
-model.add(keras.layers.InputLayer(input_shape = (9,)))
+model.add(keras.layers.InputLayer(input_shape = (windows.shape[1],)))
 model.add(keras.layers.Dense(30, activation="relu"))
 model.add(keras.layers.Dense(30, activation="relu"))
 model.add(keras.layers.Dense(30, activation="relu"))
@@ -162,6 +174,7 @@ history = model.fit(X_train, y_train, epochs=1,
 model.evaluate(X_test, y_test)
 y_proba = model.predict(X_test)
 y_predict = model.predict_classes(X_test)
+print('*************  NEURAL NET REPORT *********************')
 print(sklearn.metrics.classification_report(y_test, y_predict))
 print(sklearn.metrics.confusion_matrix(y_test, y_predict))
 
@@ -176,16 +189,16 @@ classified = (classified - 1) * 255
 clas_img = Image.fromarray(classified)
 clas_img.show()
 
-classified = classified[np.newaxis, :, :].astype(rio.int8)
+classified = classified[np.newaxis, :, :].astype(rio.int16)
 
-with rio.open(img_file) as src:
+with rio.open(img_file1) as src:
     height = src.height
     width = src.width
     crs = src.crs
     transform = src.transform
-    dtype = rio.int8
+    dtype = rio.int16
     count = 1
-    with rio.open(clas_file, 'w', driver = 'GTiff', 
+    with rio.open(outclas_file, 'w', driver = 'GTiff',
                   height = height, width = width, 
                   crs = crs, dtype = dtype, 
                   count = count, transform = transform) as clas_dst:
@@ -224,7 +237,7 @@ class classify_block:
         y_hat.name = 'y_hat'
         temp_df = self.block_df.merge(y_hat, left_index = True, right_index = True, how = 'left')
         classified = temp_df['y_hat'].to_numpy().reshape(self.shape[1], self.shape[2])
-        classified = classified[np.newaxis, :, :].astype(rio.int8)
+        classified = classified[np.newaxis, :, :].astype(rio.int16)
         return classified
     
     def calc_probabilities(self):
@@ -242,13 +255,13 @@ class classify_block:
         probabilities = probabilities.astype(rio.float32)
         return probabilities
 
-clas_file = ''
-prob_file = ''
+clas_file = input_dir + 'sklearn_test/class_file.tif'
+prob_file = input_dir + 'sklearn_test/prob_file.tif'
 
-with rio.open(img_file) as src:
+with rio.open(outtif) as src:
     clas_dst = rio.open(clas_file, 'w', driver = 'GTiff', 
                    height = src.height, width = src.width, 
-                   crs = src.crs, dtype = rio.int8, 
+                   crs = src.crs, dtype = rio.int16,
                    count = 1, transform = src.transform)
     prob_dst = rio.open(prob_file, 'w', driver = 'GTiff', 
                    height = src.height, width = src.width, 
