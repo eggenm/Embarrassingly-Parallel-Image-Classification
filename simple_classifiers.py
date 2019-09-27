@@ -252,12 +252,12 @@ print(sklearn.metrics.confusion_matrix(y_train, y_hat))
 # =============================================================================
 # Create predicted map
 # =============================================================================
-data_df['predicted'] = randomforest_fitted_clf.predict(X)
+data_df['predicted'] = randomforest_fitted_clf.predict(X_scaled)
 clas_df = pd.DataFrame(index = full_index)
 classified = clas_df.merge(data_df['predicted'], left_index = True, right_index = True, how = 'left').sort_index()
 classified = classified['predicted'].values.reshape(shape[1], shape[2])
-classified = (classified - 1) * 255
-clas_img = Image.fromarray(classified)
+clas_img = ((classified * 255)/2).astype('uint8')
+clas_img = Image.fromarray(clas_img)
 clas_img.show()
 
 classified = classified[np.newaxis, :, :].astype(rio.int16)
