@@ -9,12 +9,16 @@ Created on Wed Sep 11 15:12:56 2019
 # =============================================================================
 import keras
 import dirfuncs
+import glob
 import pandas as pd
 from pathlib import Path
 from PIL import Image
 import numpy as np
-from osgeo import gdal
+from osgeo import gdal,gdalconst
 import rasterio as rio
+import rasterio.warp
+import rasterio.crs
+from rasterio.warp import calculate_default_transform, reproject, Resampling
 from sklearn.ensemble import RandomForestClassifier as rfc
 from sklearn.model_selection import train_test_split, cross_val_score, \
     GridSearchCV, cross_val_predict, ShuffleSplit, learning_curve, RandomizedSearchCV
@@ -32,23 +36,21 @@ from sklearn.model_selection import RandomizedSearchCV
 # Identify files
 # =============================================================================
 dropbox_dir = dirfuncs.guess_dropbox_dir()
-input_dir = dropbox_dir + "HCSproject\\data\\PoC\\app_kalbar_cntk\\"
-img_file1 = input_dir + 'app_kalbar_input_ndvi_s2.tif'
-img_file2 = input_dir + 'app_kalbar_input.S2_swir1.tif'
-img_file3 = input_dir + 'app_kalbar_input.S2_swir2.tif'
-img_file4 = input_dir + 'app_kalbar_input.VH.tif'
-clas_file = input_dir + 'app_kalbar_remap.tif'
-outclas_file = input_dir + 'sklearn_test/classified.tif'
+base_dir = dropbox_dir + "HCSproject\\data\\PoC\\app_kalbar_cntk\\"
+input_dir = base_dir + "in\\"
+
+clas_file = base_dir + 'app_kalbar_remap.tif'
+outclas_file = base_dir + 'sklearn_test/classified.tif'
+referencefile=''
 outvrt = '/vsimem/stacked.vrt' #/vsimem is special in-memory virtual "directory"
-outtif = input_dir + 'app_kalbar_input_stacked.tif'
-tifs = [img_file1, img_file2, img_file3]#, img_file4]
-print('**  INPUT:  ', tifs)
+outtif = base_dir + 'out\\input_stacked22.tif'
+tifs = []#, img_file4]
 classes = {2: "HCSA",
            1: "Not_HCSA",
            0: "NA"}
 
 # =============================================================================
-# Read and prep raster data
+# FUNCTIONS:  Read and prep raster data
 # =============================================================================
 def return_window(array, i, j, n):
     """
@@ -104,13 +106,29 @@ def gen_windows(array, n):
     index = windows.index
     windows = pd.DataFrame(windows.apply(lambda x: x.flatten()).values.tolist(), index = index)
     return(windows)
-    
-## Read spectral data
-outds = gdal.BuildVRT(outvrt, tifs, separate=True)
-outds = gdal.Translate(outtif, outds)
 
+
+def stackData(*concessions):
+    file_list = glob.glob(input_dir+"\\*.tif")
+    with rasterio.open(file_list[0]) as src0:
+        meta = src0.meta
+
+    # Update meta to reflect the number of layers
+    meta.update(count=len(file_list))
+
+    # Read each layer and write it to stack
+    with rasterio.open(outtif, 'w', **meta) as dst:
+        for i, layer in enumerate(file_list, start=1):
+            with rasterio.open(layer) as src1:
+                dst.write_band(i, src1.read(1))
+    dst.close()
+
+#getData('app_kalbar_cntk')
+stackData('app_kalbar_cntk')
 with rio.open(outtif) as img_src:
     img = img_src.read()
+
+
 shape = img.shape
 windows = gen_windows(img, 1)
 
@@ -136,32 +154,32 @@ y = data_df['class'].values
 #encoder.fit(y)
 #n_classes = encoder.classes_.shape[0]
 #y_encoded = encoder.transform(y)
-X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, 
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, train_size=0.5, test_size=0.2,
                                                     random_state=123)
 
 # =============================================================================
 # Train and test random forest classifier
 # =============================================================================
-clf = rfc(n_estimators=30, max_depth = 5, max_features = .3, max_leaf_nodes = 10,
+clf = rfc(n_estimators=60, max_depth = 6, max_features = .3, max_leaf_nodes = 10,
           random_state=123, oob_score = True, n_jobs = -1, 
-          class_weight = {1: 0.33, 2: 0.34})
-#clf.fit(X_train, y_train)
-
-param_grid = [{'max_depth': [2, 10],
-               'max_leaf_nodes': [10, 20, 50], 
-               'max_features': [.25, .5, .75]}]
-grid_search = GridSearchCV(clf, param_grid, cv = 5, #scoring = 'sparse_categorical_crossentropy',
-                           return_train_score = True, refit = True)
-
-grid_search.fit(X_train, y_train)
-    
-fitted_clf = grid_search.best_estimator_
-y_hat = fitted_clf.predict(X_test)
+        #  class_weight = {0:0.33, 1: 0.33, 2: 0.34})
+          class_weight ='balanced')
+randomforest_fitted_clf = clf.fit(X_train, y_train)
+# param_grid = [{'max_depth': [2, 10],
+#                'max_leaf_nodes': [10, 20, 50],
+#                'max_features': [.25, .5, .75]}]
+# grid_search = GridSearchCV(clf, param_grid, cv = 5, #scoring = 'balanced_accuracy',
+#                            return_train_score = True, refit = True)
+#
+# grid_search.fit(X_train, y_train)
+#
+# randomforest_fitted_clf = grid_search.best_estimator_
+y_hat = randomforest_fitted_clf.predict(X_test)
 print('*************  RANDOM FOREST  - X_TEST  **********************')
 print(sklearn.metrics.classification_report(y_test, y_hat))
 print(sklearn.metrics.confusion_matrix(y_test, y_hat))
 
-y_hat = fitted_clf.predict(X_train)
+y_hat = randomforest_fitted_clf.predict(X_train)
 print('*************  RANDOM FOREST  - X_TRAIN  **********************')
 print(sklearn.metrics.classification_report(y_train, y_hat))
 print(sklearn.metrics.confusion_matrix(y_train, y_hat))
@@ -169,70 +187,72 @@ print(sklearn.metrics.confusion_matrix(y_train, y_hat))
 # =============================================================================
 # Neural network
 # =============================================================================
-model = keras.models.Sequential()
-model.add(keras.layers.InputLayer(input_shape = (windows.shape[1],)))
-model.add(keras.layers.Dense(30, activation="relu"))
-model.add(keras.layers.Dense(30, activation="relu"))
-model.add(keras.layers.Dense(30, activation="relu"))
-model.add(keras.layers.Dense(30, activation="relu"))
-model.add(keras.layers.Dense(3, activation="softmax"))
-
-model.compile(loss="sparse_categorical_crossentropy",
-              optimizer=keras.optimizers.SGD(lr=0.05),
-              metrics=["accuracy"])
-history = model.fit(X_train, y_train, epochs=1,
-                    validation_split = 0.5,
-                    callbacks=[keras.callbacks.EarlyStopping(patience=5)])
-
-model.evaluate(X_test, y_test)
-y_proba = model.predict(X_test)
-y_predict = model.predict_classes(X_test)
-print('*************  NEURAL NET REPORT *********************')
-print(sklearn.metrics.classification_report(y_test, y_predict))
-print(sklearn.metrics.confusion_matrix(y_test, y_predict))
+# model = keras.models.Sequential()
+# model.add(keras.layers.InputLayer(input_shape = (windows.shape[1],)))
+# model.add(keras.layers.Dense(30, activation="relu"))
+# model.add(keras.layers.Dense(30, activation="relu"))
+# model.add(keras.layers.Dense(30, activation="relu"))
+# model.add(keras.layers.Dense(30, activation="relu"))
+# model.add(keras.layers.Dense(3, activation="softmax"))
+#
+# model.compile(optimizer=keras.optimizers.Adadelta(),
+#             loss='sparse_categorical_crossentropy',
+#           #  metrics=['sparse_categorical_accuracy'])
+#            #   optimizer=keras.optimizers.SGD(lr=0.05),
+#               metrics=["accuracy"])
+# history = model.fit(X_train, y_train, epochs=1,
+#                     validation_split = 0.5,
+#                     callbacks=[keras.callbacks.EarlyStopping(patience=5)])
+#
+# model.evaluate(X_test, y_test)
+# y_proba = model.predict(X_test)
+# y_predict = model.predict_classes(X_test)
+# print('*************  NEURAL NET REPORT *********************')
+# print(sklearn.metrics.classification_report(y_test, y_predict))
+# print(sklearn.metrics.confusion_matrix(y_test, y_predict))
 
 
 # =============================================================================
 # Neural net with hyperparameter tuning
 # =============================================================================
-def build_model(n_hidden = 1, n_neurons = 30, learning_rate = 0.03, n_bands = 3, n_classes = 3):
-    model = keras.models.Sequential()
-    model.add(keras.layers.InputLayer(input_shape = (n_bands,)))
-    for layer in range(n_hidden):
-        model.add(keras.layers.Dense(n_neurons, activation="relu"))
-    model.add(keras.layers.Dense(n_classes, activation="softmax"))
-    model.compile(loss="sparse_categorical_crossentropy",
-                  optimizer=keras.optimizers.SGD(lr=learning_rate),
-                  metrics=["accuracy"])
-    return model
-
-keras_clf = keras.wrappers.scikit_learn.KerasClassifier(build_model)
-
-param_distribs = {"n_hidden": [1, 5, 10],
-                  "n_neurons": np.arange(1, 100),
-                  "learning_rate": reciprocal(3e-3, 7e-2)}
-rnd_search_cv = RandomizedSearchCV(keras_clf, param_distribs, n_iter=10, cv=3)
-rnd_search_cv.fit(X_train, y_train, epochs=100, validation_split = 0.8,
-                  callbacks = [keras.callbacks.EarlyStopping(patience = 5)])
-
-keras_clf.fit(X_train, y_train, epochs=10, validation_split = 0.8,
-              callbacks = [keras.callbacks.EarlyStopping(patience = 5)])
-
-model = rnd_search_cv.best_estimator_
-y_pred = model.predict(X_train)
-print('*************  TUNED NEURAL NET - WITHIN REPORT *********************')
-print(sklearn.metrics.classification_report(y_train, y_pred))
-print(sklearn.metrics.confusion_matrix(y_train, y_pred))
-
-y_pred = model.predict(X_test)
-print('*************  TUNED NEURAL NET - OUT REPORT *********************')
-print(sklearn.metrics.classification_report(y_test, y_pred))
-print(sklearn.metrics.confusion_matrix(y_test, y_pred))
+# def build_model(n_hidden = 1, n_neurons = 30, learning_rate = 0.03, n_bands = 4, n_classes = 3):
+#     model = keras.models.Sequential()
+#     model.add(keras.layers.InputLayer(input_shape = (n_bands,)))
+#     for layer in range(n_hidden):
+#         model.add(keras.layers.Dense(n_neurons, activation="relu"))
+#     model.add(keras.layers.Dense(n_classes, activation="softmax"))
+#     model.compile(loss="sparse_categorical_crossentropy",
+#                   optimizer=keras.optimizers.SGD(lr=learning_rate),
+#                   metrics=["accuracy"])
+#     return model
+#
+# keras_clf = keras.wrappers.scikit_learn.KerasClassifier(build_model)
+#
+# param_distribs = {"n_hidden": [1, 5, 10],
+#                   "n_neurons": np.arange(1, 100),
+#                   "learning_rate": reciprocal(3e-3, 7e-2)}
+# rnd_search_cv = RandomizedSearchCV(keras_clf, param_distribs, n_iter=10, cv=3)
+# rnd_search_cv.fit(X_train, y_train, epochs=100, validation_split = 0.8,
+#                   callbacks = [keras.callbacks.EarlyStopping(patience = 5)])
+#
+# keras_clf.fit(X_train, y_train, epochs=10, validation_split = 0.8,
+#               callbacks = [keras.callbacks.EarlyStopping(patience = 5)])
+#
+# nueral_model = rnd_search_cv.best_estimator_
+# y_pred = nueral_model.predict(X_train)
+# print('*************  TUNED NEURAL NET - WITHIN REPORT *********************')
+# print(sklearn.metrics.classification_report(y_train, y_pred))
+# print(sklearn.metrics.confusion_matrix(y_train, y_pred))
+#
+# y_pred = nueral_model.predict(X_test)
+# print('*************  TUNED NEURAL NET - OUT REPORT *********************')
+# print(sklearn.metrics.classification_report(y_test, y_pred))
+# print(sklearn.metrics.confusion_matrix(y_test, y_pred))
 
 # =============================================================================
 # Create predicted map
 # =============================================================================
-data_df['predicted'] = fitted_clf.predict(X)
+data_df['predicted'] = randomforest_fitted_clf.predict(X)
 clas_df = pd.DataFrame(index = full_index)
 classified = clas_df.merge(data_df['predicted'], left_index = True, right_index = True, how = 'left').sort_index()
 classified = classified['predicted'].values.reshape(shape[1], shape[2])
@@ -242,7 +262,8 @@ clas_img.show()
 
 classified = classified[np.newaxis, :, :].astype(rio.int16)
 
-with rio.open(img_file1) as src:
+referencefile = input_dir + 'app_kalbar_input_ndvi_s2.tif'
+with rio.open(referencefile) as src:
     height = src.height
     width = src.width
     crs = src.crs
@@ -260,7 +281,7 @@ with rio.open(img_file1) as src:
 # Probably would need to be modified to work with windowed values rather than multiband image
 # =============================================================================
 class classify_block:
-    def __init__(self, block, fitted_clf):
+    def __init__(self, block, randomforest_fitted_clf):
         """
         Parameters
         ----------
@@ -270,7 +291,7 @@ class classify_block:
         fitted_clf: sklearn classifier
             classifier that should be applid to block
         """
-        self.fitted_clf = fitted_clf
+        self.fitted_clf = randomforest_fitted_clf
         self.shape = block.shape
         block = block.reshape((self.shape[0], self.shape[1] * self.shape[2])).T
         self.block_df = pd.DataFrame(block)
@@ -298,7 +319,7 @@ class classify_block:
         probabilities: array
             Array of predicted probabilities for each class
         """
-        clas_cols = ['prob_' + str(clas) for clas in fitted_clf.classes_]
+        clas_cols = ['prob_' + str(clas) for clas in randomforest_fitted_clf.classes_]
         pred_df = self.fitted_clf.predict_proba(self.x_df)
         pred_df = pd.DataFrame(pred_df, index = self.x_df.index, columns = clas_cols)    
         temp_df = self.block_df.merge(pred_df, left_index = True, right_index = True, how = 'left')
@@ -306,8 +327,8 @@ class classify_block:
         probabilities = probabilities.astype(rio.float32)
         return probabilities
 
-clas_file = input_dir + 'sklearn_test/class_file.tif'
-prob_file = input_dir + 'sklearn_test/prob_file.tif'
+clas_file = base_dir + 'sklearn_test\\class_file.tif'
+prob_file = base_dir + 'sklearn_test\\prob_file.tif'
 
 with rio.open(outtif) as src:
     clas_dst = rio.open(clas_file, 'w', driver = 'GTiff', 
@@ -317,11 +338,11 @@ with rio.open(outtif) as src:
     prob_dst = rio.open(prob_file, 'w', driver = 'GTiff', 
                    height = src.height, width = src.width, 
                    crs = src.crs, dtype = rio.float32, 
-                   count = len(fitted_clf.classes_), transform = src.transform)
+                   count = len(randomforest_fitted_clf.classes_), transform = src.transform)
     for ji, window in src.block_windows(1):
         block = src.read(window = window)
         if sum(sum(sum(~np.isnan(block))))>0:
-            block_classifier = classify_block(block, fitted_clf)
+            block_classifier = classify_block(block, randomforest_fitted_clf)
             classified = block_classifier.classify()
             probabilities = block_classifier.calc_probabilities()
             clas_dst.write(classified, window = window)
